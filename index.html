@@ -210,6 +210,11 @@
   .board li.empty-tip{
     justify-content:center;color:#8fb08c;font-size:.78em;background:none;padding:1.1em 0;
   }
+  .board-tip{
+    margin:.15em 0 .1em;font-size:.66em;line-height:1.5;letter-spacing:.04em;
+    color:#8fb08c;text-align:center;min-height:1.5em;
+  }
+  .board-tip.err{color:#c06a3c;}
 
   /* 提示气泡 */
   .toast{
@@ -311,6 +316,7 @@ window.addEventListener('unhandledrejection', function (e) {
     <div class="panel board">
       <h2>排 行 榜</h2>
       <ol id="boardList"></ol>
+      <p id="boardTip" class="board-tip">正在同步…</p>
       <div class="btns">
         <button class="btn" id="btnBoardClose">关 闭</button>
       </div>
@@ -943,11 +949,13 @@ function triggerGameOver(){
   // 每次结算都把昵称输入露出来，预填上次用过的名字
   const nr = document.getElementById('nickRow');
   const inp = document.getElementById('nickInput');
+  const sb = document.getElementById('btnSubmit');
   if (nr) nr.classList.remove('hidden');
   if (inp){
     inp.disabled = false;
     inp.value = Store.get(NICK_KEY, '');
   }
+  if (sb) sb.disabled = false;
 
   overScreen.classList.remove('hidden');
 }
@@ -1071,11 +1079,28 @@ function resumeGame(d){
 }
 
 /* --------------------------------------------------------------------------
-   排行榜（本机存储，跨设备共享需要后端）
+   排行榜（Supabase 云端共享）
+   - 榜单存在 Supabase 的 scores 表里，和《合成大果蛙》共用一张表，靠 game 字段区分
+   - anon key 是公开的，保护靠 RLS：只放开 select + insert，改不了也删不掉
+   - 每次打开榜单先渲染本地缓存（秒开），再拉云端覆盖；断网就停在上次同步的结果
    -------------------------------------------------------------------------- */
-const BOARD_KEY = 'jinjin_board_v1';
+const SUPA = {
+  url: 'https://ovhlalelrhrnafqonmfq.supabase.co/rest/v1/scores',
+  key: 'sb_publishable_kXET0ttL_O58oVEk3P-edg_0LOFcF55',
+  game: 'jinjin',
+};
+const BOARD_KEY = 'jinjin_board_v1';   // 只当缓存用
 const NICK_KEY = 'jinjin_nick';
+const BOARD_LIMIT = 10;                // 榜单显示几条
+const BOARD_POOL = 60;                 // 从云端最多取多少条回来做去重
 
+function escHtml(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+// 本地缓存：{n 昵称, s 分数, t 时间戳}
 function getBoard(){
   try{
     const a = JSON.parse(Store.get(BOARD_KEY, '[]'));
@@ -1084,25 +1109,103 @@ function getBoard(){
   }catch(e){ return []; }
 }
 
-function addBoardEntry(name, s){
-  const list = getBoard();
-  list.push({ n: name, s: s | 0, t: Date.now() });
-  list.sort(function(a, b){ return b.s - a.s || a.t - b.t; });
-  const top = list.slice(0, 30);
-  Store.set(BOARD_KEY, JSON.stringify(top));
-  return top;
+function setBoard(list){
+  try{ Store.set(BOARD_KEY, JSON.stringify(list.slice(0, BOARD_POOL))); }catch(e){}
 }
 
-function escHtml(s){
-  return String(s).replace(/[&<>"']/g, function(c){
-    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+// 同名只留最高分，再按分数降序、同分先到先排
+function tidyBoard(rows){
+  const best = {};
+  for (let i = 0; i < rows.length; i++){
+    const r = rows[i];
+    if (!r || typeof r.s !== 'number') continue;
+    const k = String(r.n || '').trim();
+    if (!k) continue;
+    if (!best[k] || r.s > best[k].s) best[k] = { n: k, s: r.s, t: r.t || 0 };
+  }
+  const list = [];
+  for (const k in best) list.push(best[k]);
+  list.sort(function(a, b){ return b.s - a.s || a.t - b.t; });
+  return list;
+}
+
+function boardTip(msg, isErr){
+  const el = document.getElementById('boardTip');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('err', !!isErr);
+}
+
+/* 云端请求：带超时，永不抛异常 —— 统一返回 {ok, status, data} */
+function supaFetch(path, opt, ms){
+  const ctrl = new AbortController();
+  const timer = setTimeout(function(){ ctrl.abort(); }, ms || 6000);
+  const o = opt || {};
+  o.signal = ctrl.signal;
+  o.headers = Object.assign({
+    'apikey': SUPA.key,
+    'Authorization': 'Bearer ' + SUPA.key,
+    'Content-Type': 'application/json',
+  }, o.headers || {});
+  return fetch(SUPA.url + path, o).then(function(r){
+    clearTimeout(timer);
+    return r.text().then(function(txt){
+      let data = null;
+      try{ data = txt ? JSON.parse(txt) : null; }catch(e){ data = null; }
+      return { ok: r.ok, status: r.status, data: data };
+    });
+  }).catch(function(e){
+    clearTimeout(timer);
+    return { ok: false, status: 0, data: null };
+  });
+}
+
+let boardLoading = false;
+
+// 拉云端榜；成功就更新缓存并重绘，失败就保持缓存内容并提示
+function loadBoard(silent){
+  if (boardLoading) return;
+  boardLoading = true;
+  if (!silent) boardTip('正在同步…');
+  const path = '?select=name,score,created_at'
+    + '&game=eq.' + encodeURIComponent(SUPA.game)
+    + '&order=score.desc,created_at.asc'
+    + '&limit=' + BOARD_POOL;
+
+  supaFetch(path, { method: 'GET' }).then(function(res){
+    boardLoading = false;
+    if (!res.ok){
+      boardTip(getBoard().length ? '网络不通，显示上次同步的记录' : '网络不通，暂时读不到榜单', true);
+      return;
+    }
+    const rows = Array.isArray(res.data) ? res.data : [];
+    const list = tidyBoard(rows.map(function(r){
+      return { n: r.name, s: r.score | 0, t: Date.parse(r.created_at) || 0 };
+    }));
+    setBoard(list);
+    renderBoard();
+    boardTip(list.length ? '共 ' + list.length + ' 人上榜 · 同名只显示最高分' : '还没有人上榜，快去玩一局');
+  });
+}
+
+// 交一条成绩到云端，成功后重新拉榜
+function submitScore(name, s, done){
+  boardTip('正在上传成绩…');
+  supaFetch('', {
+    method: 'POST',
+    headers: { 'Prefer': 'return=minimal' },
+    body: JSON.stringify({ game: SUPA.game, name: name, score: s | 0 }),
+  }).then(function(res){
+    if (!res.ok){ boardTip('上传失败，检查网络后重试', true); if (done) done(false); return; }
+    loadBoard(true);
+    if (done) done(true);
   });
 }
 
 function renderBoard(){
   const ol = document.getElementById('boardList');
   if (!ol) return;
-  const list = getBoard().slice(0, 10);
+  const list = getBoard().slice(0, BOARD_LIMIT);
   if (!list.length){
     ol.innerHTML = '<li class="empty-tip">还没有人上榜，快去玩一局</li>';
     return;
@@ -1546,16 +1649,15 @@ function bindUI(){
   }
 
   // ---- 排行榜 ----
+  const openBoard = function(){
+    renderBoard();                                     // 先显示本机缓存，秒开
+    document.getElementById('boardScreen').classList.remove('hidden');
+    loadBoard();                                       // 再从云端拉最新
+  };
   const btnBoard = document.getElementById('btnBoard');
-  if (btnBoard) btnBoard.addEventListener('click', () => {
-    renderBoard();
-    document.getElementById('boardScreen').classList.remove('hidden');
-  });
+  if (btnBoard) btnBoard.addEventListener('click', openBoard);
   const btnBoard2 = document.getElementById('btnBoard2');
-  if (btnBoard2) btnBoard2.addEventListener('click', () => {
-    renderBoard();
-    document.getElementById('boardScreen').classList.remove('hidden');
-  });
+  if (btnBoard2) btnBoard2.addEventListener('click', openBoard);
   const btnBoardClose = document.getElementById('btnBoardClose');
   if (btnBoardClose) btnBoardClose.addEventListener('click', () => {
     document.getElementById('boardScreen').classList.add('hidden');
@@ -1565,16 +1667,24 @@ function bindUI(){
   const btnSubmit = document.getElementById('btnSubmit');
   if (btnSubmit) btnSubmit.addEventListener('click', () => {
     if (submittedThisRound) return;      // 一次结算只记一条，防止重复点击
-    submittedThisRound = true;
     const inp = document.getElementById('nickInput');
     let name = ((inp && inp.value) || '').trim().slice(0, 12);
     if (!name) name = '无名玩家';
     Store.set(NICK_KEY, name);
-    addBoardEntry(name, score);
-    const nr = document.getElementById('nickRow');
-    if (nr) nr.classList.add('hidden');
-    if (inp) inp.disabled = true;
-    showToast('已记入排行榜');
+    submittedThisRound = true;
+    btnSubmit.disabled = true;
+    submitScore(name, score, function(ok){
+      if (ok){
+        const nr = document.getElementById('nickRow');
+        if (nr) nr.classList.add('hidden');
+        if (inp) inp.disabled = true;
+        showToast('已记入排行榜');
+      } else {
+        submittedThisRound = false;      // 没传上去就允许再试一次
+        btnSubmit.disabled = false;
+        showToast('上传失败，可以再点一次');
+      }
+    });
   });
   const inpNick = document.getElementById('nickInput');
   if (inpNick) inpNick.addEventListener('keydown', e => {
