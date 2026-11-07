@@ -163,6 +163,54 @@
   .panel .btns .btn{width:100%;}
   .panel .btns .btn.hidden{display:none;}
 
+  /* ---- 首页次要按钮 / 继续游戏 ---- */
+  .btn.hidden{display:none;}
+  .btn.ghost.wide{font-size:1em;padding:.62em 2.2em;}
+
+  /* ---- 昵称输入 ---- */
+  .nickrow{display:flex;gap:.45em;width:100%;align-items:center;}
+  .nickrow.hidden{display:none;}
+  .nickrow input{
+    flex:1;min-width:0;font-family:inherit;font-size:.86em;
+    padding:.6em .9em;border-radius:1.4em;
+    border:1.5px solid rgba(120,185,110,.55);
+    background:rgba(252,255,250,.95);color:#14501d;outline:none;text-align:center;
+    letter-spacing:.04em;
+  }
+  .nickrow input::placeholder{color:#9dbf9c;letter-spacing:0;}
+  .nickrow input:focus{border-color:#4fa859;box-shadow:0 0 0 .2em rgba(90,180,95,.18);}
+  /* .panel .btns .btn 有 width:100%，这里要写全选择器才压得回去 */
+  .panel .btns .nickrow .btn{
+    width:auto;flex:none;
+    padding:.56em 1.15em;font-size:.78em;letter-spacing:.05em;
+    color:#3f7a46;background:rgba(250,255,248,.96);
+    box-shadow:0 0 0 1.5px rgba(120,185,110,.7);
+  }
+  .panel .btns .nickrow .btn:active{box-shadow:0 0 0 1.5px rgba(120,185,110,.9);transform:translateY(.1em);}
+
+  /* ---- 排行榜 ---- */
+  #boardScreen{z-index:20;}
+  .board{width:100%;max-width:19em;}
+  .board h2{font-size:1.15em;color:#2f8a3d;letter-spacing:.16em;}
+  .board ol{list-style:none;width:100%;margin:.25em 0 0;padding:0;}
+  .board li{
+    display:flex;align-items:center;gap:.55em;
+    padding:.44em .75em;border-radius:.7em;font-size:.82em;color:#2c5c33;
+  }
+  .board li:nth-child(odd){background:rgba(232,250,225,.72);}
+  .board li .rk{
+    width:1.7em;flex:none;font-weight:800;color:#83b483;
+    text-align:center;font-variant-numeric:tabular-nums;
+  }
+  .board li.r1 .rk{color:#2f9a45;font-size:1.12em;}
+  .board li.r2 .rk{color:#8fa894;font-size:1.06em;}
+  .board li.r3 .rk{color:#a58a5e;font-size:1.06em;}
+  .board li .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .board li .sc{font-weight:800;font-variant-numeric:tabular-nums;color:#2f8a3d;}
+  .board li.empty-tip{
+    justify-content:center;color:#8fb08c;font-size:.78em;background:none;padding:1.1em 0;
+  }
+
   /* 提示气泡 */
   .toast{
     position:absolute;left:50%;top:24%;transform:translate(-50%,-50%) scale(.9);
@@ -229,7 +277,9 @@ window.addEventListener('unhandledrejection', function (e) {
     <img class="hero" id="heroImg" alt="大金金">
     <div class="title">合成大金金</div>
     <div class="subtitle">把金金们叠成一只大金金</div>
+    <button class="btn ghost wide hidden" id="btnResume">继 续 上 一 局</button>
     <button class="btn" id="btnStart">开 始 游 戏</button>
+    <button class="btn ghost" id="btnBoard">排 行 榜</button>
     <div class="hint">
       移动鼠标 / 滑动屏幕 瞄准落点<br>
       点击或松手，金金就会掉下来
@@ -245,8 +295,24 @@ window.addEventListener('unhandledrejection', function (e) {
       <div class="bestline">历史最高 <b id="finalBest">0</b></div>
       <div class="record hidden" id="newRecord">🎉 新纪录！</div>
       <div class="btns">
+        <div class="nickrow" id="nickRow">
+          <input id="nickInput" maxlength="12" placeholder="输入昵称，记入排行榜">
+          <button class="btn" id="btnSubmit">上 榜</button>
+        </div>
         <button class="btn orange" id="btnRevive">使用复活卡继续</button>
         <button class="btn" id="btnRestart">再 来 一 局</button>
+        <button class="btn ghost" id="btnBoard2">查 看 排 行 榜</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 排行榜 ================= -->
+  <div class="screen hidden" id="boardScreen">
+    <div class="panel board">
+      <h2>排 行 榜</h2>
+      <ol id="boardList"></ol>
+      <div class="btns">
+        <button class="btn" id="btnBoardClose">关 闭</button>
       </div>
     </div>
   </div>
@@ -355,10 +421,11 @@ let state = 'idle';         // idle | playing | over
 const Store = {
   get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
   set(k, v){ try { localStorage.setItem(k, v); } catch (e) {} },
+  remove(k){ try { localStorage.removeItem(k); } catch (e) {} },
 };
 
 let score = 0;
-let best = parseInt(Store.get('frog_best', '0'), 10) || 0;
+let best = parseInt(Store.get('jinjin_best', '0'), 10) || 0;
 let cardsEarned = 0;        // 累计获得的复活卡
 let cardsUsed = 0;          // 已使用
 let holdLevel = 1;          // 手里这只
@@ -368,6 +435,7 @@ let dropCD = 0;
 let safeUntil = 0;          // 复活后的保护期
 let isNewRecord = false;
 let bestAtStart = 0;        // 本局开始时的历史最高分
+let submittedThisRound = false;   // 本次结算是否已经上过榜
 let pointerDown = false;
 let lastTS = 0, acc = 0, clock = 0;
 const FIXED = 1000 / 60;    // 固定物理步长
@@ -483,6 +551,21 @@ function createWorld(){
   Matter.Events.on(engine, 'collisionStart', evt => {
     for (const pair of evt.pairs){
       const a = pair.bodyA, b = pair.bodyB;
+
+      // ---- Q 弹第一步：按撞击力度沿法线方向压扁 ----
+      const nrm = pair.collision && pair.collision.normal;
+      if (nrm){
+        const va = a.velocity || { x:0, y:0 }, vb = b.velocity || { x:0, y:0 };
+        const rel = Math.hypot(va.x - vb.x, va.y - vb.y);
+        const k = Math.min(1, rel / 7);
+        if (k > .05){
+          const ang = Math.atan2(nrm.y, nrm.x);
+          const amt = Math.min(.38, .10 + k * .30);
+          if (a.isFrog){ a.squash = amt; a.squashV = 0; a.squashAng = ang; }
+          if (b.isFrog){ b.squash = amt; b.squashV = 0; b.squashAng = ang; }
+        }
+      }
+
       if (!a.isFrog || !b.isFrog) continue;
       if (a.dead || b.dead || a.merging || b.merging) continue;
       if (a.level !== b.level) continue;
@@ -495,7 +578,7 @@ function createWorld(){
 function spawnFruit(level, x, y){
   const info = FRUITS[level-1];
   const body = Matter.Bodies.circle(x, y, info.r, {
-    restitution: .1,
+    restitution: .32,        // 撞一下会弹起来一下，堆叠仍然稳
     friction: .5,
     frictionStatic: .85,
     frictionAir: .004,
@@ -511,6 +594,9 @@ function spawnFruit(level, x, y){
   body.merging = false;
   body.dead = false;
   body.pop = 0;        // 0→1 的弹出动画进度
+  body.squash = 0;     // Q 弹形变量：正=沿法线压扁
+  body.squashV = 0;    // 形变速度（弹簧用）
+  body.squashAng = 0;  // 形变轴（碰撞法线角度）
   body.age = 0;
   body.armed = false;  // 是否已落过警戒线（免疫解除）
   body.overAcc = 0;    // 越线累计时间
@@ -557,7 +643,7 @@ const SFX_ANCHOR = 1;              // 原调对应的等级（改 2 就是"第�
 const SFX_MAX_RATE = 2.5;          // 音高倍率上限
 const SFX_MAX_LOUD = 1.6;          // 响度上限（相对第 1 级）
 const SFX_BASE_GAIN = .66;         // 第 1 级的播放增益
-let sfxOn = Store.get('frog_sfx', '1') !== '0';
+let sfxOn = Store.get('jinjin_sfx', '1') !== '0';
 let sfxCtx = null;   // AudioContext
 let sfxBus = null;   // 总输出（过一级压限，防止连击时多个音叠在一起破音）
 let sfxBuf = null;   // 解码后的音频数据
@@ -657,7 +743,7 @@ function playMergeSfx(level){
 
 function setSfxOn(on){
   sfxOn = on;
-  Store.set('frog_sfx', on ? '1' : '0');
+  Store.set('jinjin_sfx', on ? '1' : '0');
   const btn = document.getElementById('btnSound');
   if (btn){
     btn.textContent = on ? '🔊' : '🔇';
@@ -688,6 +774,7 @@ function handleMerge(a, b){
     addBurst(mx, my, '#c8f0a0', 26, 1.8);
     addBurst(mx, my, '#e6fbdd', 14, 1.2);
     playMergeSfx(MAX_LEVEL);
+    saveGame();
     return;
   }
 
@@ -699,6 +786,7 @@ function handleMerge(a, b){
   addScore(FRUITS[nl-1].score);
   addPopup(mx, my, '+' + FRUITS[nl-1].score, FRUITS[nl-1].color);
   addBurst(mx, my, FRUITS[nl-1].color, 12, 1);
+  saveGame();
 }
 
 /* --------------------------------------------------------------------------
@@ -720,7 +808,7 @@ function addScore(n){
   if (score > best){
     best = score;
     bestEl.textContent = best;
-    Store.set('frog_best', best);
+    Store.set('jinjin_best', best);
   }
 
   // 每跨过一个 cardPer 的整数倍，送一张复活卡
@@ -759,6 +847,7 @@ function drop(){
   nextLevel = randLevel();
   dropCD = CFG.cooldown;
   refreshNext();
+  saveGame();
   addBurst(aimX, CFG.dropY + FRUITS[holdLevel-1].r * .4, '#cfe9d8', 5, .5);
 }
 
@@ -794,6 +883,15 @@ function afterPhysics(dt){
     b.age += dt;
     if (b.pop < 1) b.pop = Math.min(1, b.pop + dt * 5.5);
 
+    // Q 弹第二步：欠阻尼弹簧，压下去回弹过冲、再收住，抖两下才停
+    if (b.squash !== 0 || b.squashV !== 0){
+      b.squashV += (-b.squash * 300 - b.squashV * 13) * dt;
+      b.squash += b.squashV * dt;
+      if (Math.abs(b.squash) < .003 && Math.abs(b.squashV) < .05){
+        b.squash = 0; b.squashV = 0;
+      }
+    }
+
     // 用"看得见的顶端"判定，而不是碰撞圆顶端：贴图比碰撞圆高，用 b.r 会让玩家觉得判负莫名其妙
     const top = b.position.y - b.r * VIS_TOP;
     // 免疫：刚投放/刚合成的金金要先"落到线下"或超过 2.5 秒才参与判定
@@ -827,6 +925,7 @@ const btnRevive = document.getElementById('btnRevive');
 function triggerGameOver(){
   if (state !== 'playing') return;
   state = 'over';
+  clearSave();          // 这一局结束了，存档作废（用了复活卡会重新写一份）
 
   isNewRecord = score > bestAtStart;   // 本局是否刷新了历史记录
   bestEl.textContent = best;
@@ -838,6 +937,17 @@ function triggerGameOver(){
   const left = Math.max(0, cardsEarned - cardsUsed);
   btnRevive.textContent = '使用复活卡继续（剩 ' + left + '）';
   btnRevive.classList.toggle('hidden', left <= 0);
+
+  submittedThisRound = false;
+
+  // 每次结算都把昵称输入露出来，预填上次用过的名字
+  const nr = document.getElementById('nickRow');
+  const inp = document.getElementById('nickInput');
+  if (nr) nr.classList.remove('hidden');
+  if (inp){
+    inp.disabled = false;
+    inp.value = Store.get(NICK_KEY, '');
+  }
 
   overScreen.classList.remove('hidden');
 }
@@ -870,6 +980,146 @@ function revive(){
   overScreen.classList.add('hidden');
 }
 
+/* --------------------------------------------------------------------------
+   存档：关掉页面再回来能接着玩
+   -------------------------------------------------------------------------- */
+const SAVE_KEY = 'jinjin_save_v1';
+let lastSaveAt = 0;
+
+function saveGame(force){
+  if (state !== 'playing' || !world) return;
+  const now = Date.now();
+  if (!force && now - lastSaveAt < 600) return;   // 合成会连着触发，别每次都写盘
+  lastSaveAt = now;
+  try{
+    const balls = [];
+    for (const b of fruits.values()){
+      balls.push([
+        b.level,
+        Math.round(b.position.x * 10) / 10,
+        Math.round(b.position.y * 10) / 10,
+        Math.round(b.angle * 1000) / 1000,
+        b.armed ? 1 : 0,
+      ]);
+    }
+    Store.set(SAVE_KEY, JSON.stringify({
+      v: 1,
+      score: score,
+      cardsEarned: cardsEarned,
+      cardsUsed: cardsUsed,
+      holdLevel: holdLevel,
+      nextLevel: nextLevel,
+      bestAtStart: bestAtStart,
+      balls: balls,
+      ts: Date.now(),
+    }));
+  }catch(e){}
+}
+
+function readSave(){
+  try{
+    const raw = Store.get(SAVE_KEY, '');
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || d.v !== 1 || !Array.isArray(d.balls) || d.balls.length === 0) return null;
+    return d;
+  }catch(e){ return null; }
+}
+
+function clearSave(){ Store.remove(SAVE_KEY); }
+
+function refreshResumeBtn(){
+  const btn = document.getElementById('btnResume');
+  if (!btn) return;
+  const d = readSave();
+  if (d && d.balls.length){
+    btn.classList.remove('hidden');
+    btn.textContent = '继 续 上 一 局 · ' + (d.score | 0) + ' 分';
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+function resumeGame(d){
+  if (!d) return;
+  resetGame();          // 先清场
+  score = d.score | 0;
+  cardsEarned = d.cardsEarned | 0;
+  cardsUsed = d.cardsUsed | 0;
+  holdLevel = clamp(d.holdLevel | 0, 1, MAX_LEVEL);
+  nextLevel = clamp(d.nextLevel | 0, 1, MAX_LEVEL);
+  bestAtStart = d.bestAtStart | 0;
+
+  for (const p of d.balls){
+    const lv = clamp(p[0] | 0, 1, MAX_LEVEL);
+    const b = spawnFruit(lv, p[1], p[2]);
+    Matter.Body.setAngle(b, p[3] || 0);
+    Matter.Body.setVelocity(b, { x:0, y:0 });
+    b.pop = 1;
+    b.age = 99;
+    b.armed = !!p[4];
+  }
+
+  scoreEl.textContent = score;
+  bestEl.textContent = best;
+  refreshCardUI();
+  refreshNext();
+  aimX = CFG.W / 2;
+  safeUntil = performance.now() + 900;
+  state = 'playing';
+  saveGame();
+}
+
+/* --------------------------------------------------------------------------
+   排行榜（本机存储，跨设备共享需要后端）
+   -------------------------------------------------------------------------- */
+const BOARD_KEY = 'jinjin_board_v1';
+const NICK_KEY = 'jinjin_nick';
+
+function getBoard(){
+  try{
+    const a = JSON.parse(Store.get(BOARD_KEY, '[]'));
+    if (!Array.isArray(a)) return [];
+    return a.filter(function(x){ return x && typeof x.s === 'number'; });
+  }catch(e){ return []; }
+}
+
+function addBoardEntry(name, s){
+  const list = getBoard();
+  list.push({ n: name, s: s | 0, t: Date.now() });
+  list.sort(function(a, b){ return b.s - a.s || a.t - b.t; });
+  const top = list.slice(0, 30);
+  Store.set(BOARD_KEY, JSON.stringify(top));
+  return top;
+}
+
+function escHtml(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+  });
+}
+
+function renderBoard(){
+  const ol = document.getElementById('boardList');
+  if (!ol) return;
+  const list = getBoard().slice(0, 10);
+  if (!list.length){
+    ol.innerHTML = '<li class="empty-tip">还没有人上榜，快去玩一局</li>';
+    return;
+  }
+  const out = [];
+  for (let i = 0; i < list.length; i++){
+    out.push(
+      '<li class="r' + (i + 1) + '">' +
+        '<span class="rk">' + (i + 1) + '</span>' +
+        '<span class="nm">' + escHtml(list[i].n) + '</span>' +
+        '<span class="sc">' + list[i].s + '</span>' +
+      '</li>'
+    );
+  }
+  ol.innerHTML = out.join('');
+}
+
 function resetGame(){
   // 只清金金，保留静态墙体
   Matter.Composite.clear(world, true);
@@ -888,6 +1138,7 @@ function resetGame(){
   dropCD = 0;
   safeUntil = performance.now() + 600;
   isNewRecord = false;
+  clearSave();             // 新开一局，旧存档作废
 
   scoreEl.textContent = '0';
   bestEl.textContent = best;
@@ -1058,6 +1309,16 @@ function drawOne(body){
   ctx.save();
   ctx.translate(body.position.x, body.position.y);
   ctx.rotate(body.angle);
+
+  // Q 弹变形：沿碰撞法线压短、垂直方向鼓出
+  const sq = body.squash || 0;
+  if (sq > .004 || sq < -.004){
+    const rel = (body.squashAng || 0) - body.angle;
+    ctx.rotate(rel);
+    ctx.scale(1 + sq * .75, 1 - sq * .75);
+    ctx.rotate(-rel);
+  }
+
   if (sp){
     // 极淡的深绿投影，让人像在浅绿背景上也能分离出来
     // 人像面积大，阴影一旦重就会在人物四周糊出一圈灰雾，所以调得比水果版轻
@@ -1266,6 +1527,69 @@ function bindUI(){
       setSfxOn(!sfxOn);
     });
   }
+
+  // ---- 继续上一局 ----
+  const btnResume = document.getElementById('btnResume');
+  if (btnResume){
+    btnResume.addEventListener('click', () => {
+      const d = readSave();
+      if (!d){ refreshResumeBtn(); return; }
+      if (!ready){
+        try { if (!world) createWorld(); ready = true; }
+        catch (err) { fatal(err); return; }
+      }
+      hudEl.style.opacity = '1';
+      startScreen.classList.add('hidden');
+      initSfx();
+      resumeGame(d);
+    });
+  }
+
+  // ---- 排行榜 ----
+  const btnBoard = document.getElementById('btnBoard');
+  if (btnBoard) btnBoard.addEventListener('click', () => {
+    renderBoard();
+    document.getElementById('boardScreen').classList.remove('hidden');
+  });
+  const btnBoard2 = document.getElementById('btnBoard2');
+  if (btnBoard2) btnBoard2.addEventListener('click', () => {
+    renderBoard();
+    document.getElementById('boardScreen').classList.remove('hidden');
+  });
+  const btnBoardClose = document.getElementById('btnBoardClose');
+  if (btnBoardClose) btnBoardClose.addEventListener('click', () => {
+    document.getElementById('boardScreen').classList.add('hidden');
+  });
+
+  // ---- 上榜 ----
+  const btnSubmit = document.getElementById('btnSubmit');
+  if (btnSubmit) btnSubmit.addEventListener('click', () => {
+    if (submittedThisRound) return;      // 一次结算只记一条，防止重复点击
+    submittedThisRound = true;
+    const inp = document.getElementById('nickInput');
+    let name = ((inp && inp.value) || '').trim().slice(0, 12);
+    if (!name) name = '无名玩家';
+    Store.set(NICK_KEY, name);
+    addBoardEntry(name, score);
+    const nr = document.getElementById('nickRow');
+    if (nr) nr.classList.add('hidden');
+    if (inp) inp.disabled = true;
+    showToast('已记入排行榜');
+  });
+  const inpNick = document.getElementById('nickInput');
+  if (inpNick) inpNick.addEventListener('keydown', e => {
+    if (e.key === 'Enter'){ e.preventDefault(); btnSubmit && btnSubmit.click(); }
+  });
+
+  // ---- 离开页面时把进度落盘 ----
+  const flush = () => saveGame(true);
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('beforeunload', flush);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+  setInterval(() => saveGame(), 3000);   // 兜底
+
+  refreshResumeBtn();   // 有存档才显示"继续上一局"
+
   window.addEventListener('resize', layout);
   window.addEventListener('orientationchange', () => setTimeout(layout, 120));
 }
