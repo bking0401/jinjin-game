@@ -1092,7 +1092,8 @@ const SUPA = {
 const BOARD_KEY = 'jinjin_board_v1';   // 只当缓存用
 const NICK_KEY = 'jinjin_nick';
 const BOARD_LIMIT = 10;                // 榜单显示几条
-const BOARD_POOL = 60;                 // 从云端最多取多少条回来做去重
+const BOARD_POOL = 200;                // 云端一次取多少条回来做去重（太小会把低分玩家挤出视野）
+const BOARD_CACHE = 20;                // 本机只缓存这么多，够显示和断网兜底
 
 function escHtml(s){
   return String(s).replace(/[&<>"']/g, function(c){
@@ -1110,7 +1111,7 @@ function getBoard(){
 }
 
 function setBoard(list){
-  try{ Store.set(BOARD_KEY, JSON.stringify(list.slice(0, BOARD_POOL))); }catch(e){}
+  try{ Store.set(BOARD_KEY, JSON.stringify(list.slice(0, BOARD_CACHE))); }catch(e){}
 }
 
 // 同名只留最高分，再按分数降序、同分先到先排
